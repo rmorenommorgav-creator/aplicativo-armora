@@ -1,0 +1,1640 @@
+import "./index.css";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+type LinkType = "freelance" | "planilla";
+type ExecutiveType = "a_pie" | "motorizado" | "sin_viatico";
+type PensionType = "" | "Ninguno" | "ONP" | "Habitat" | "Integra" | "Prima" | "Profuturo";
+type TabKey = "commercial" | "delivery" | "results" | "reading" | "history" | "payslips";
+
+type GeneralParams = {
+  daysMonth: number;
+  daysPreventa2: number;
+  daysReparto2: number;
+  igvPct: number;
+  grossMarginWithIgvPct: number;
+  targetProfitMonthly: number;
+  fixedBaseDays: number;
+  managementDay: number;
+  otherVariablesDay: number;
+};
+
+type FixedExpense = {
+  id: string;
+  active: boolean;
+  quantity: number;
+  concept: string;
+  payDate: string;
+  monthlyUnitCost: number;
+};
+
+type CommissionTier = {
+  id: string;
+  from: number;
+  to: number | null;
+  ratePct: number;
+};
+
+type PayrollParams = {
+  regime: string;
+  rmv: number;
+  uit: number;
+  familyPctRmv: number;
+  onpPct: number;
+  afpHabitatPct: number;
+  afpIntegraPct: number;
+  afpPrimaPct: number;
+  afpProfuturoPct: number;
+  lifeInsuranceDay: number;
+  sisMonthly: number;
+  vacationDaysYear: number;
+};
+
+type Executive = {
+  id: string;
+  active: boolean;
+  name: string;
+  link: LinkType;
+  type: ExecutiveType;
+  avgTicket: number;
+  minDailySale: number;
+  monthlyBase: number;
+  children: number;
+  pension: PensionType;
+  fifthMonthly: number;
+};
+
+type SupervisorParams = {
+  name: string;
+  link: LinkType;
+  minAccumulatedDailySale: number;
+  monthlyBase: number;
+  monthlyCommissionPerExecutive: number;
+  monthlyAllowance: number;
+  children: number;
+  pension: PensionType;
+};
+
+type ChiefParams = {
+  name: string;
+  link: LinkType;
+  count: number;
+  monthlyBase: number;
+  monthlyExtra: number;
+  monthlyVariablePerExecutive: number;
+  children: number;
+  pension: PensionType;
+};
+
+type DeliveryParams = {
+  vehicleCostDay: number;
+  capacityPerCar: number;
+  dieselDay: number;
+  gnvDay: number;
+  gasolineDay: number;
+  rentBiPct: number;
+};
+
+type DeliveryWorker = {
+  name: string;
+  link: LinkType;
+  freelanceFixedDay: number;
+  monthlyBase: number;
+  punctualityBonusMonthly: number;
+  children: number;
+  pension: PensionType;
+  bonus100: number;
+  bonus95: number;
+};
+
+type RouteRow = {
+  id: string;
+  route: string;
+  coveragePreventa: number;
+  coverageEffective: number;
+  assistantCount: number;
+  driverLink: LinkType;
+  assistantLink: LinkType;
+};
+
+type HistoryRow = {
+  id: string;
+  workDate: string;
+  from: string;
+  to: string;
+  dailySales: number;
+  monthlySales: number;
+  totalCoverage: number;
+  breakEven: number;
+  profitableQuota: number;
+  netDailyProfit: number;
+  netMonthlyProfit: number;
+  fixedExpenseDay: number;
+  variableExpenseDay: number;
+  activeExecutives: number;
+  commissionableExecutives: number;
+  freelanceStaff: number;
+  payrollStaff: number;
+  regime: string;
+};
+
+type WorkerSummary = {
+  id: string;
+  label: string;
+  name: string;
+  cargo: string;
+  routeArea: string;
+  link: LinkType;
+  regime: string;
+  days: number;
+  totalIncome: number;
+  totalDiscounts: number;
+  netPay: number;
+  companyCost: number;
+  details: {
+    income: Array<{ label: string; amount: number }>;
+    discounts: Array<{ label: string; amount: number }>;
+    employer: Array<{ label: string; amount: number }>;
+    observation: string;
+  };
+};
+
+const APP_PREFIX = "armora-peq-v1";
+
+const PEN = new Intl.NumberFormat("es-PE", {
+  style: "currency",
+  currency: "PEN",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const pct = (value: number) => `${safeNumber(value).toFixed(2)}%`;
+const money = (value: number) => PEN.format(safeNumber(value));
+const safeNumber = (value: number) => (Number.isFinite(value) ? value : 0);
+const clamp = (value: number, min = 0) => (value < min ? min : value);
+const uid = () => Math.random().toString(36).slice(2, 10);
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const parseNumber = (raw: string) => {
+  const normalized = raw.replace(/,/g, ".").replace(/[^0-9.-]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
+
+const defaultGeneralParams: GeneralParams = {
+  daysMonth: 26,
+  daysPreventa2: 13,
+  daysReparto2: 13,
+  igvPct: 18,
+  grossMarginWithIgvPct: 10,
+  targetProfitMonthly: 0,
+  fixedBaseDays: 13,
+  managementDay: 0,
+  otherVariablesDay: 0,
+};
+
+const defaultFixedExpenses: FixedExpense[] = [
+  { id: "celulares", active: true, quantity: 2, concept: "CELULARES", payDate: "", monthlyUnitCost: 34.95 },
+  { id: "cel-gerente", active: true, quantity: 1, concept: "CELULARES GERENTE", payDate: "", monthlyUnitCost: 93.46 },
+  { id: "internet-lima", active: true, quantity: 1, concept: "INTERNET LIMA", payDate: "", monthlyUnitCost: 248.99 },
+  { id: "internet-ica", active: true, quantity: 1, concept: "INTERNET ICA", payDate: "", monthlyUnitCost: 100 },
+  { id: "luz", active: true, quantity: 1, concept: "LUZ", payDate: "", monthlyUnitCost: 70 },
+  { id: "contabilidad", active: true, quantity: 1, concept: "CONTABILIDAD", payDate: "", monthlyUnitCost: 300 },
+  { id: "chatgpt", active: true, quantity: 1, concept: "CHATGPT", payDate: "", monthlyUnitCost: 81.66 },
+  { id: "interes-prestamo", active: true, quantity: 0.1, concept: "INTERÉS PRÉSTAMO", payDate: "", monthlyUnitCost: 3000 },
+];
+
+const freelanceTierDefaults: CommissionTier[] = [
+  { id: "f-1", from: 0, to: 1999.99, ratePct: 0 },
+  { id: "f-2", from: 2000, to: 3999.99, ratePct: 1 },
+  { id: "f-3", from: 4000, to: 4999.99, ratePct: 2 },
+  { id: "f-4", from: 5000, to: null, ratePct: 2.5 },
+];
+
+const payrollTierDefaults: CommissionTier[] = [
+  { id: "p-1", from: 0, to: 1999.99, ratePct: 0 },
+  { id: "p-2", from: 2000, to: 2599.99, ratePct: 1 },
+  { id: "p-3", from: 2600, to: 3499.99, ratePct: 1.5 },
+  { id: "p-4", from: 3500, to: null, ratePct: 2 },
+];
+
+const defaultPayrollParams: PayrollParams = {
+  regime: "Microempresa",
+  rmv: 1130,
+  uit: 5500,
+  familyPctRmv: 10,
+  onpPct: 13,
+  afpHabitatPct: 12.9,
+  afpIntegraPct: 12.78,
+  afpPrimaPct: 12.37,
+  afpProfuturoPct: 12.63,
+  lifeInsuranceDay: 0.1,
+  sisMonthly: 0,
+  vacationDaysYear: 15,
+};
+
+const defaultExecutives: Executive[] = Array.from({ length: 11 }, (_, index) => ({
+  id: `exec-${index + 1}`,
+  active: index < 2,
+  name: `Ejecutivo ${index + 1}`,
+  link: index < 2 ? "freelance" : "planilla",
+  type: index % 3 === 0 ? "motorizado" : index % 3 === 1 ? "a_pie" : "sin_viatico",
+  avgTicket: 150,
+  minDailySale: index < 2 ? 3000 : 0,
+  monthlyBase: 1130,
+  children: 0,
+  pension: "ONP",
+  fifthMonthly: 0,
+}));
+
+const defaultSupervisor: SupervisorParams = {
+  name: "Supervisor de ventas",
+  link: "planilla",
+  minAccumulatedDailySale: 18000,
+  monthlyBase: 1130,
+  monthlyCommissionPerExecutive: 340,
+  monthlyAllowance: 650,
+  children: 0,
+  pension: "ONP",
+};
+
+const defaultChief: ChiefParams = {
+  name: "Jefe de ventas",
+  link: "planilla",
+  count: 1,
+  monthlyBase: 1130,
+  monthlyExtra: 650,
+  monthlyVariablePerExecutive: 200,
+  children: 0,
+  pension: "ONP",
+};
+
+const defaultDeliveryParams: DeliveryParams = {
+  vehicleCostDay: 100,
+  capacityPerCar: 110,
+  dieselDay: 0,
+  gnvDay: 0,
+  gasolineDay: 0,
+  rentBiPct: 1,
+};
+
+const defaultDriver: DeliveryWorker = {
+  name: "Chofer 1",
+  link: "planilla",
+  freelanceFixedDay: 61.54,
+  monthlyBase: 1130,
+  punctualityBonusMonthly: 0,
+  children: 0,
+  pension: "ONP",
+  bonus100: 0.25,
+  bonus95: 0.2,
+};
+
+const defaultAssistant: DeliveryWorker = {
+  name: "Auxiliar 1",
+  link: "planilla",
+  freelanceFixedDay: 46.15,
+  monthlyBase: 1200,
+  punctualityBonusMonthly: 0,
+  children: 0,
+  pension: "ONP",
+  bonus100: 0.15,
+  bonus95: 0.1,
+};
+
+const defaultRoutes: RouteRow[] = ["10", "20", "30", "40", "50", "60"].map((route) => ({
+  id: `ruta-${route}`,
+  route: `Ruta ${route}`,
+  coveragePreventa: 0,
+  coverageEffective: 0,
+  assistantCount: 0,
+  driverLink: "planilla",
+  assistantLink: "planilla",
+}));
+
+function usePersistedState<T>(key: string, initialValue: T): [T, (value: T | ((previous: T) => T)) => void] {
+  const storageKey = `${APP_PREFIX}.${key}`;
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? ({ ...initialValue, ...JSON.parse(stored) } as T) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(value));
+    } catch {
+      return;
+    }
+  }, [storageKey, value]);
+
+  return [value, setValue];
+}
+
+function usePersistedArray<T>(key: string, initialValue: T[]): [T[], (value: T[] | ((previous: T[]) => T[])) => void] {
+  const storageKey = `${APP_PREFIX}.${key}`;
+  const [value, setValue] = useState<T[]>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? (JSON.parse(stored) as T[]) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(value));
+    } catch {
+      return;
+    }
+  }, [storageKey, value]);
+
+  return [value, setValue];
+}
+
+function CollapsibleSection({
+  id,
+  title,
+  subtitle,
+  children,
+  defaultOpen = true,
+}: {
+  id: string;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const key = `${APP_PREFIX}.collapsible.${id}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    const stored = localStorage.getItem(key);
+    return stored === null ? defaultOpen : stored === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, String(open));
+  }, [key, open]);
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">{title}</h2>
+          {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
+        </div>
+        <Button variant="outline" onClick={() => setOpen((current) => !current)}>
+          {open ? "Ocultar ▲" : "Mostrar ▼"}
+        </Button>
+      </div>
+      {open ? <div className="p-4">{children}</div> : null}
+    </section>
+  );
+}
+
+function Button({
+  children,
+  onClick,
+  type = "button",
+  variant = "default",
+  className,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit" | "reset";
+  variant?: "default" | "outline" | "ghost" | "danger";
+  className?: string;
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      className={cn(
+        "inline-flex min-h-10 items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50",
+        variant === "default" && "bg-slate-950 text-white hover:bg-slate-800",
+        variant === "outline" && "border border-slate-300 bg-white text-slate-900 hover:bg-slate-50",
+        variant === "ghost" && "text-slate-700 hover:bg-slate-100",
+        variant === "danger" && "bg-red-600 text-white hover:bg-red-700",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function TextInput({ value, onChange, placeholder, className }: { value: string; onChange: (value: string) => void; placeholder?: string; className?: string }) {
+  return (
+    <input
+      value={value}
+      placeholder={placeholder}
+      onChange={(event: { target: { value: string } }) => onChange(event.target.value)}
+      className={cn("h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200", className)}
+    />
+  );
+}
+
+function NumberInput({
+  value,
+  onChange,
+  className,
+  min,
+  step = "0.01",
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  className?: string;
+  min?: number;
+  step?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [text, setText] = useState(String(safeNumber(value)));
+
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) {
+      setText(String(safeNumber(value)));
+    }
+  }, [value]);
+
+  return (
+    <input
+      ref={inputRef}
+      value={text}
+      type="number"
+      min={min}
+      step={step}
+      onBlur={() => setText(String(safeNumber(value)))}
+      onChange={(event: { target: { value: string } }) => {
+        const nextText = event.target.value;
+        setText(nextText);
+        onChange(nextText === "" ? 0 : parseNumber(nextText));
+      }}
+      className={cn("h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-right text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200", className)}
+    />
+  );
+}
+
+function SelectInput<T extends string>({ value, onChange, options }: { value: T; onChange: (value: T) => void; options: Array<{ label: string; value: T }> }) {
+  return (
+    <select
+      value={value}
+      onChange={(event: { target: { value: string } }) => onChange(event.target.value as T)}
+      className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function CheckboxInput({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+  return <input checked={checked} onChange={(event: { target: { checked: boolean } }) => onChange(event.target.checked)} type="checkbox" className="h-5 w-5 rounded border-slate-300 accent-slate-950" />;
+}
+
+function MetricCard({ title, value, caption }: { title: string; value: string; caption?: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+      <p className="mt-2 text-2xl font-black text-slate-950">{value}</p>
+      {caption ? <p className="mt-1 text-xs text-slate-500">{caption}</p> : null}
+    </div>
+  );
+}
+
+function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: "slate" | "green" | "red" | "amber" | "blue" }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex rounded-full px-2.5 py-1 text-xs font-bold",
+        tone === "slate" && "bg-slate-100 text-slate-700",
+        tone === "green" && "bg-emerald-100 text-emerald-700",
+        tone === "red" && "bg-red-100 text-red-700",
+        tone === "amber" && "bg-amber-100 text-amber-800",
+        tone === "blue" && "bg-blue-100 text-blue-700",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function TableWrap({ children }: { children: ReactNode }) {
+  return <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">{children}</div>;
+}
+
+function getPensionRate(pension: PensionType, payroll: PayrollParams) {
+  const selected = pension === "" || pension === "Ninguno" ? "ONP" : pension;
+  if (selected === "ONP") return payroll.onpPct;
+  if (selected === "Habitat") return payroll.afpHabitatPct;
+  if (selected === "Integra") return payroll.afpIntegraPct;
+  if (selected === "Prima") return payroll.afpPrimaPct;
+  if (selected === "Profuturo") return payroll.afpProfuturoPct;
+  return payroll.onpPct;
+}
+
+function getPensionUsed(pension: PensionType) {
+  return pension === "" || pension === "Ninguno" ? "ONP" : pension;
+}
+
+function commissionRateForSale(sale: number, tiers: CommissionTier[]) {
+  const tier = tiers
+    .slice()
+    .sort((a, b) => a.from - b.from)
+    .find((item) => sale >= item.from && (item.to === null || sale <= item.to));
+  return tier ? tier.ratePct : 0;
+}
+
+function coverageBonusFactor(coverage: number) {
+  if (coverage < 12) return 0;
+  if (coverage <= 26) return 0.1;
+  if (coverage <= 32) return 0.15;
+  return 0.2;
+}
+
+function viaticByType(type: ExecutiveType, coverage: number) {
+  if (coverage < 12) return 0;
+  if (type === "motorizado") return 17.92;
+  if (type === "a_pie") return 16;
+  return 0;
+}
+
+function familyAllowance(children: number, payroll: PayrollParams) {
+  return children > 0 ? payroll.rmv * (payroll.familyPctRmv / 100) : 0;
+}
+
+function simplifiedFifthCategoryMonthly(monthlyGross: number, payroll: PayrollParams) {
+  const taxableYear = monthlyGross * 12 - payroll.uit * 7;
+  return taxableYear > 0 ? (taxableYear * 0.08) / 12 : 0;
+}
+
+function payrollComputation({
+  link,
+  grossMonthly,
+  children,
+  pension,
+  payroll,
+  days,
+  fifthMonthlyOverride,
+}: {
+  link: LinkType;
+  grossMonthly: number;
+  children: number;
+  pension: PensionType;
+  payroll: PayrollParams;
+  days: number;
+  fifthMonthlyOverride?: number;
+}) {
+  if (link === "freelance") {
+    return {
+      pensionUsed: "No aplica",
+      pensionRate: 0,
+      pensionDiscount: 0,
+      fifthCategory: 0,
+      vacationMonthly: 0,
+      lifeMonthly: 0,
+      sisMonthly: 0,
+      totalDiscounts: 0,
+      netPay: grossMonthly,
+      companyCost: grossMonthly,
+      companyExtra: 0,
+    };
+  }
+
+  const pensionRate = getPensionRate(pension, payroll);
+  const pensionDiscount = grossMonthly * (pensionRate / 100);
+  const fifthCategory = fifthMonthlyOverride !== undefined ? fifthMonthlyOverride : simplifiedFifthCategoryMonthly(grossMonthly, payroll);
+  const vacationMonthly = grossMonthly / 24;
+  const lifeMonthly = payroll.lifeInsuranceDay * days;
+  const sisMonthly = payroll.sisMonthly;
+  const totalDiscounts = pensionDiscount + fifthCategory;
+  const companyExtra = vacationMonthly + lifeMonthly + sisMonthly;
+
+  return {
+    pensionUsed: getPensionUsed(pension),
+    pensionRate,
+    pensionDiscount,
+    fifthCategory,
+    vacationMonthly,
+    lifeMonthly,
+    sisMonthly,
+    totalDiscounts,
+    netPay: grossMonthly - totalDiscounts,
+    companyCost: grossMonthly + companyExtra,
+    companyExtra,
+  };
+}
+
+function getDeliveryBonusFactor(coveragePreventa: number, coverageEffective: number, worker: DeliveryWorker) {
+  if (coverageEffective < 12 || coveragePreventa <= 0) return 0;
+  if (coverageEffective === coveragePreventa) return worker.bonus100;
+  if (coverageEffective >= Math.ceil(coveragePreventa * 0.95)) return worker.bonus95;
+  return 0;
+}
+
+function App() {
+  const [tab, setTab] = usePersistedState<TabKey>("active-tab", "commercial");
+  const [general, setGeneral] = usePersistedState<GeneralParams>("general", defaultGeneralParams);
+  const [fixedExpenses, setFixedExpenses] = usePersistedArray<FixedExpense>("fixed-expenses", defaultFixedExpenses);
+  const [freelanceTiers, setFreelanceTiers] = usePersistedArray<CommissionTier>("freelance-tiers", freelanceTierDefaults);
+  const [payrollTiers, setPayrollTiers] = usePersistedArray<CommissionTier>("payroll-tiers", payrollTierDefaults);
+  const [payroll, setPayroll] = usePersistedState<PayrollParams>("payroll", defaultPayrollParams);
+  const [executives, setExecutives] = usePersistedArray<Executive>("executives", defaultExecutives);
+  const [supervisor, setSupervisor] = usePersistedState<SupervisorParams>("supervisor", defaultSupervisor);
+  const [chief, setChief] = usePersistedState<ChiefParams>("chief", defaultChief);
+  const [delivery, setDelivery] = usePersistedState<DeliveryParams>("delivery", defaultDeliveryParams);
+  const [driver, setDriver] = usePersistedState<DeliveryWorker>("driver", defaultDriver);
+  const [assistant, setAssistant] = usePersistedState<DeliveryWorker>("assistant", defaultAssistant);
+  const [routes, setRoutes] = usePersistedArray<RouteRow>("routes", defaultRoutes);
+  const [history, setHistory] = usePersistedArray<HistoryRow>("history", []);
+  const [historyForm, setHistoryForm] = usePersistedState("history-form", { workDate: todayIso(), from: todayIso(), to: todayIso() });
+  const [payslipForm, setPayslipForm] = usePersistedState("payslip-form", { from: todayIso(), to: todayIso(), workerId: "" });
+
+  const fixedTotals = useMemo(() => {
+    const activeMonthly = fixedExpenses.reduce((sum, item) => sum + (item.active ? item.quantity * item.monthlyUnitCost : 0), 0);
+    const baseDays = general.fixedBaseDays > 0 ? general.fixedBaseDays : 1;
+    return { activeMonthly, dailyBase: activeMonthly / baseDays };
+  }, [fixedExpenses, general.fixedBaseDays]);
+
+  const executiveRows = useMemo(() => {
+    const activeCount = executives.filter((item) => item.active).length;
+    const salesDays = activeCount <= 2 ? general.daysPreventa2 : general.daysMonth;
+
+    return executives.map((executive) => {
+      const coverage = executive.avgTicket > 0 ? Math.floor(executive.minDailySale / executive.avgTicket) : 0;
+      const tiers = executive.link === "freelance" ? freelanceTiers : payrollTiers;
+      const commissionRate = commissionRateForSale(executive.minDailySale, tiers);
+      const commissionAmountDay = executive.minDailySale * (commissionRate / 100);
+      const coverageBonusDay = coverage * coverageBonusFactor(coverage);
+      const viaticDay = viaticByType(executive.type, coverage);
+      const baseMonthly = executive.monthlyBase > 0 ? executive.monthlyBase : payroll.rmv;
+      const family = executive.link === "planilla" ? familyAllowance(executive.children, payroll) : 0;
+      const baseDay = executive.link === "planilla" ? (baseMonthly + family) / general.daysMonth : 0;
+      const grossDay = executive.active ? baseDay + commissionAmountDay + coverageBonusDay + viaticDay : 0;
+      const grossMonthly = grossDay * salesDays;
+      const planilla = payrollComputation({
+        link: executive.link,
+        grossMonthly,
+        children: executive.children,
+        pension: executive.pension,
+        payroll,
+        days: salesDays,
+        fifthMonthlyOverride: executive.fifthMonthly,
+      });
+      const discountsDay = salesDays > 0 ? planilla.totalDiscounts / salesDays : 0;
+      const netDay = grossDay - discountsDay;
+      const vacationDay = executive.link === "planilla" && salesDays > 0 ? planilla.vacationMonthly / salesDays : 0;
+      const lifeDay = executive.link === "planilla" && salesDays > 0 ? planilla.lifeMonthly / salesDays : 0;
+      const sisDay = executive.link === "planilla" && salesDays > 0 ? planilla.sisMonthly / salesDays : 0;
+      const companyCostDay = executive.active ? grossDay + vacationDay + lifeDay + sisDay : 0;
+
+      return {
+        ...executive,
+        coverage,
+        commissionRate,
+        commissionAmountDay,
+        coverageBonusDay,
+        viaticDay,
+        grossDay,
+        grossMonthly,
+        pensionUsed: executive.link === "planilla" ? planilla.pensionUsed : "No aplica",
+        pensionRate: executive.link === "planilla" ? planilla.pensionRate : 0,
+        pensionDiscountMonthly: planilla.pensionDiscount,
+        fifthMonthlyCalculated: planilla.fifthCategory,
+        discountsDay,
+        netDay,
+        vacationDay,
+        lifeDay,
+        sisDay,
+        companyCostDay,
+        companyCostMonthly: companyCostDay * salesDays,
+        commissionable: executive.active && executive.minDailySale >= 2000 && coverage >= 12,
+      };
+    });
+  }, [executives, freelanceTiers, general.daysMonth, general.daysPreventa2, payroll, payrollTiers]);
+
+  const commercialSummary = useMemo(() => {
+    const activeRows = executiveRows.filter((item) => item.active);
+    const activeCount = activeRows.length;
+    const salesDays = activeCount <= 2 ? general.daysPreventa2 : general.daysMonth;
+    const deliveryDays = activeCount <= 2 ? general.daysReparto2 : general.daysMonth;
+    const dailySales = activeRows.reduce((sum, item) => sum + item.minDailySale, 0);
+    const monthlySales = dailySales * salesDays;
+    const totalCoverage = activeRows.reduce((sum, item) => sum + item.coverage, 0);
+    const ticketWeighted = totalCoverage > 0 ? dailySales / totalCoverage : 0;
+    const commissionableCount = activeRows.filter((item) => item.commissionable).length;
+    return { activeRows, activeCount, salesDays, deliveryDays, dailySales, monthlySales, totalCoverage, ticketWeighted, commissionableCount };
+  }, [executiveRows, general.daysMonth, general.daysPreventa2, general.daysReparto2]);
+
+  const supervisorCalc = useMemo(() => {
+    const enabled = commercialSummary.activeCount > 2 && commercialSummary.commissionableCount >= 5;
+    const reachesSales = commercialSummary.dailySales >= supervisor.minAccumulatedDailySale;
+    const base = enabled ? supervisor.monthlyBase : 0;
+    const commission = enabled && reachesSales ? supervisor.monthlyCommissionPerExecutive * commercialSummary.commissionableCount : 0;
+    const allowance = enabled && reachesSales ? supervisor.monthlyAllowance : 0;
+    const family = enabled && supervisor.link === "planilla" ? familyAllowance(supervisor.children, payroll) : 0;
+    const grossMonthly = base + family + commission + allowance;
+    const planilla = payrollComputation({ link: supervisor.link, grossMonthly, children: supervisor.children, pension: supervisor.pension, payroll, days: general.daysMonth });
+    return { enabled, reachesSales, grossMonthly, planilla, dailyGross: grossMonthly / general.daysMonth, companyCostDay: planilla.companyCost / general.daysMonth };
+  }, [commercialSummary.activeCount, commercialSummary.commissionableCount, commercialSummary.dailySales, general.daysMonth, payroll, supervisor]);
+
+  const chiefCalc = useMemo(() => {
+    const enabled = commercialSummary.activeCount > 2 && commercialSummary.commissionableCount >= 8 && chief.count > 0;
+    const family = enabled && chief.link === "planilla" ? familyAllowance(chief.children, payroll) : 0;
+    const grossOne = enabled ? chief.monthlyBase + chief.monthlyExtra + family + chief.monthlyVariablePerExecutive * commercialSummary.commissionableCount : 0;
+    const grossMonthly = grossOne * chief.count;
+    const planilla = payrollComputation({ link: chief.link, grossMonthly, children: chief.children, pension: chief.pension, payroll, days: general.daysMonth });
+    return { enabled, grossMonthly, planilla, dailyGross: grossMonthly / general.daysMonth, companyCostDay: planilla.companyCost / general.daysMonth };
+  }, [chief, commercialSummary.activeCount, commercialSummary.commissionableCount, general.daysMonth, payroll]);
+
+  const workerDailyCost = (worker: DeliveryWorker, link: LinkType, count: number) => {
+    if (count <= 0) return { gross: 0, vacation: 0, life: 0, sis: 0, cost: 0, discounts: 0, net: 0 };
+    if (link === "freelance") {
+      const gross = worker.freelanceFixedDay * count;
+      return { gross, vacation: 0, life: 0, sis: 0, cost: gross, discounts: 0, net: gross };
+    }
+    const family = familyAllowance(worker.children, payroll);
+    const monthlyGrossPerWorker = (worker.monthlyBase > 0 ? worker.monthlyBase : payroll.rmv) + worker.punctualityBonusMonthly + family;
+    const calc = payrollComputation({ link, grossMonthly: monthlyGrossPerWorker * count, children: worker.children, pension: worker.pension, payroll, days: general.daysMonth });
+    return {
+      gross: (monthlyGrossPerWorker * count) / general.daysMonth,
+      vacation: calc.vacationMonthly / general.daysMonth,
+      life: calc.lifeMonthly / general.daysMonth,
+      sis: calc.sisMonthly / general.daysMonth,
+      cost: calc.companyCost / general.daysMonth,
+      discounts: calc.totalDiscounts / general.daysMonth,
+      net: calc.netPay / general.daysMonth,
+    };
+  };
+
+  const routeRows = useMemo(() => {
+    return routes.map((route) => {
+      const active = route.coveragePreventa > 0;
+      const cars = active ? Math.ceil(route.coveragePreventa / Math.max(delivery.capacityPerCar, 1)) : 0;
+      const drivers = cars;
+      const assistants = active ? route.assistantCount : 0;
+      const recognizedCoverage = Math.min(route.coverageEffective, route.coveragePreventa);
+      const effectiveness = route.coveragePreventa > 0 ? route.coverageEffective / route.coveragePreventa : 0;
+      const driverLabor = workerDailyCost(driver, route.driverLink, drivers);
+      const assistantLabor = workerDailyCost(assistant, route.assistantLink, assistants);
+      const driverBonusFactor = getDeliveryBonusFactor(route.coveragePreventa, route.coverageEffective, driver);
+      const assistantBonusFactor = getDeliveryBonusFactor(route.coveragePreventa, route.coverageEffective, assistant);
+      const driverBonus = recognizedCoverage * driverBonusFactor;
+      const assistantBonus = recognizedCoverage * assistantBonusFactor;
+      const vehicle = cars * delivery.vehicleCostDay;
+      const costDay = active ? vehicle + driverLabor.cost + assistantLabor.cost + driverBonus + assistantBonus : 0;
+      return { ...route, active, cars, drivers, assistants, effectiveness, driverLabor, assistantLabor, driverBonusFactor, assistantBonusFactor, driverBonus, assistantBonus, vehicle, costDay };
+    });
+  }, [assistant, delivery.capacityPerCar, delivery.vehicleCostDay, driver, general.daysMonth, payroll, routes]);
+
+  const deliverySummary = useMemo(() => {
+    const cars = routeRows.reduce((sum, item) => sum + item.cars, 0);
+    const coveragePreventa = routeRows.reduce((sum, item) => sum + item.coveragePreventa, 0);
+    const coverageEffective = routeRows.reduce((sum, item) => sum + item.coverageEffective, 0);
+    const vehicleDay = routeRows.reduce((sum, item) => sum + item.vehicle, 0);
+    const payrollGrossDay = routeRows.reduce((sum, item) => sum + item.driverLabor.gross + item.assistantLabor.gross + item.driverBonus + item.assistantBonus, 0);
+    const vacationDay = routeRows.reduce((sum, item) => sum + item.driverLabor.vacation + item.assistantLabor.vacation, 0);
+    const sisDay = routeRows.reduce((sum, item) => sum + item.driverLabor.sis + item.assistantLabor.sis, 0);
+    const lifeDay = routeRows.reduce((sum, item) => sum + item.driverLabor.life + item.assistantLabor.life, 0);
+    const costDay = routeRows.reduce((sum, item) => sum + item.costDay, 0);
+    return { cars, coveragePreventa, coverageEffective, vehicleDay, payrollGrossDay, vacationDay, sisDay, lifeDay, costDay };
+  }, [routeRows]);
+
+  const financial = useMemo(() => {
+    const igvFactor = 1 + general.igvPct / 100;
+    const salesWithIgvDay = commercialSummary.dailySales;
+    const salesWithoutIgvDay = salesWithIgvDay / igvFactor;
+    const igvDay = salesWithoutIgvDay * (general.igvPct / 100);
+    const grossProfitWithIgvDay = salesWithIgvDay * (general.grossMarginWithIgvPct / 100);
+    const grossProfitWithoutIgvDay = grossProfitWithIgvDay / igvFactor;
+    const costsWithIgvDay = salesWithIgvDay - grossProfitWithIgvDay;
+    const activeExecRows = executiveRows.filter((item) => item.active);
+    const salesGrossLaborDay = activeExecRows.reduce((sum, item) => sum + item.grossDay, 0);
+    const salesVacationDay = activeExecRows.reduce((sum, item) => sum + item.vacationDay, 0);
+    const salesSisDay = activeExecRows.reduce((sum, item) => sum + item.sisDay, 0);
+    const salesLifeDay = activeExecRows.reduce((sum, item) => sum + item.lifeDay, 0);
+    const supervisorVacationDay = supervisorCalc.planilla.vacationMonthly / general.daysMonth;
+    const supervisorSisDay = supervisorCalc.planilla.sisMonthly / general.daysMonth;
+    const supervisorLifeDay = supervisorCalc.planilla.lifeMonthly / general.daysMonth;
+    const chiefVacationDay = chiefCalc.planilla.vacationMonthly / general.daysMonth;
+    const chiefSisDay = chiefCalc.planilla.sisMonthly / general.daysMonth;
+    const chiefLifeDay = chiefCalc.planilla.lifeMonthly / general.daysMonth;
+    const planillaVentasDay = salesGrossLaborDay + salesVacationDay;
+    const planillaRepartoDay = deliverySummary.payrollGrossDay + deliverySummary.vacationDay;
+    const planillaSupervisorDay = supervisorCalc.dailyGross + supervisorVacationDay;
+    const planillaChiefDay = chiefCalc.dailyGross + chiefVacationDay;
+    const rentBiDay = salesWithoutIgvDay * (delivery.rentBiPct / 100);
+    const sisDay = salesSisDay + deliverySummary.sisDay + supervisorSisDay + chiefSisDay;
+    const lifeDay = salesLifeDay + deliverySummary.lifeDay + supervisorLifeDay + chiefLifeDay;
+    const variableDay =
+      planillaVentasDay +
+      planillaRepartoDay +
+      planillaSupervisorDay +
+      planillaChiefDay +
+      general.managementDay +
+      delivery.dieselDay +
+      delivery.gnvDay +
+      delivery.gasolineDay +
+      deliverySummary.vehicleDay +
+      rentBiDay +
+      sisDay +
+      lifeDay +
+      general.otherVariablesDay;
+    const netProfitDay = grossProfitWithoutIgvDay - fixedTotals.dailyBase - variableDay;
+    const netProfitMonthly = netProfitDay * commercialSummary.salesDays;
+    const marginWithoutIgvOverSales = (general.grossMarginWithIgvPct / 100) / igvFactor;
+    const breakEven = marginWithoutIgvOverSales > 0 ? (fixedTotals.dailyBase + variableDay) / marginWithoutIgvOverSales : 0;
+    const breakEvenPerExecutive = commercialSummary.activeCount > 0 ? breakEven / commercialSummary.activeCount : 0;
+    const profitableQuotaPerExecutive = commercialSummary.activeCount > 0 ? (breakEven + general.targetProfitMonthly / Math.max(commercialSummary.salesDays, 1)) / commercialSummary.activeCount : 0;
+    const profitableCoverage = commercialSummary.ticketWeighted > 0 ? Math.ceil(breakEven / commercialSummary.ticketWeighted) : 0;
+
+    const rows = [
+      { item: "Ventas C/IGV", day: salesWithIgvDay, month: salesWithIgvDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Costos C/IGV", day: costsWithIgvDay, month: costsWithIgvDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "IGV 18% de ventas S/IGV", day: igvDay, month: igvDay * commercialSummary.salesDays, base: salesWithoutIgvDay, marginBase: grossProfitWithIgvDay, fixedPct: general.igvPct },
+      { item: "Ventas S/IGV", day: salesWithoutIgvDay, month: salesWithoutIgvDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Utilidad neta", day: netProfitDay, month: netProfitMonthly, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Utilidad bruta C/IGV", day: grossProfitWithIgvDay, month: grossProfitWithIgvDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Utilidad bruta S/IGV", day: grossProfitWithoutIgvDay, month: grossProfitWithoutIgvDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Gastos fijos", day: fixedTotals.dailyBase, month: fixedTotals.activeMonthly, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Gastos variables", day: variableDay, month: variableDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Planilla supervisor", day: planillaSupervisorDay, month: planillaSupervisorDay * general.daysMonth, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Planilla jefe", day: planillaChiefDay, month: planillaChiefDay * general.daysMonth, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Planilla gerente", day: general.managementDay, month: general.managementDay * general.daysMonth, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Diesel D2", day: delivery.dieselDay, month: delivery.dieselDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "GNV", day: delivery.gnvDay, month: delivery.gnvDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Gasolina regular", day: delivery.gasolineDay, month: delivery.gasolineDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Alquiler vehículo", day: deliverySummary.vehicleDay, month: deliverySummary.vehicleDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Planilla reparto", day: planillaRepartoDay, month: planillaRepartoDay * commercialSummary.deliveryDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Planilla ventas", day: planillaVentasDay, month: planillaVentasDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "SIS / seguro microempresa", day: sisDay, month: sisDay * general.daysMonth, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Renta 1% BI", day: rentBiDay, month: rentBiDay * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Seguro vida ley", day: lifeDay, month: lifeDay * general.daysMonth, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+      { item: "Punto de equilibrio", day: breakEven, month: breakEven * commercialSummary.salesDays, base: salesWithIgvDay, marginBase: grossProfitWithIgvDay },
+    ];
+
+    const monthlyRows = [
+      { item: "Ventas C/IGV", value: salesWithIgvDay * commercialSummary.salesDays },
+      { item: "Costos C/IGV", value: costsWithIgvDay * commercialSummary.salesDays },
+      { item: "IGV 18% de ventas S/IGV", value: igvDay * commercialSummary.salesDays },
+      { item: "Ventas S/IGV", value: salesWithoutIgvDay * commercialSummary.salesDays },
+      { item: "Utilidad bruta C/IGV", value: grossProfitWithIgvDay * commercialSummary.salesDays },
+      { item: "Utilidad bruta S/IGV", value: grossProfitWithoutIgvDay * commercialSummary.salesDays },
+      { item: "Gastos fijos", value: fixedTotals.activeMonthly },
+      { item: "Planilla ventas", value: planillaVentasDay * commercialSummary.salesDays },
+      { item: "Planilla reparto", value: planillaRepartoDay * commercialSummary.deliveryDays },
+      { item: "Supervisor", value: planillaSupervisorDay * general.daysMonth },
+      { item: "Jefe", value: planillaChiefDay * general.daysMonth },
+      { item: "Gerencia", value: general.managementDay * general.daysMonth },
+      { item: "Diesel D2", value: delivery.dieselDay * commercialSummary.deliveryDays },
+      { item: "GNV", value: delivery.gnvDay * commercialSummary.deliveryDays },
+      { item: "Gasolina regular", value: delivery.gasolineDay * commercialSummary.deliveryDays },
+      { item: "Alquiler vehículo", value: deliverySummary.vehicleDay * commercialSummary.deliveryDays },
+      { item: "Renta 1% BI", value: rentBiDay * commercialSummary.salesDays },
+      { item: "SIS / seguro microempresa", value: sisDay * general.daysMonth },
+      { item: "Seguro vida ley", value: lifeDay * general.daysMonth },
+      { item: "Otros gastos variables", value: general.otherVariablesDay * commercialSummary.salesDays },
+      { item: "Gastos variables totales", value: variableDay * commercialSummary.salesDays },
+      { item: "Utilidad neta", value: netProfitMonthly },
+    ];
+
+    return {
+      salesWithIgvDay,
+      salesWithoutIgvDay,
+      costsWithIgvDay,
+      igvDay,
+      grossProfitWithIgvDay,
+      grossProfitWithoutIgvDay,
+      marginWithoutIgvOverSales,
+      variableDay,
+      netProfitDay,
+      netProfitMonthly,
+      breakEven,
+      breakEvenPerExecutive,
+      profitableQuotaPerExecutive,
+      profitableCoverage,
+      rows,
+      monthlyRows,
+      planillaVentasDay,
+      planillaRepartoDay,
+      sisDay,
+      lifeDay,
+      rentBiDay,
+    };
+  }, [chiefCalc, commercialSummary, delivery, deliverySummary, executiveRows, fixedTotals, general, supervisorCalc]);
+
+  const personnelRows = useMemo<WorkerSummary[]>(() => {
+    const rows: WorkerSummary[] = [];
+    const daysSales = commercialSummary.salesDays;
+    const daysDelivery = commercialSummary.deliveryDays;
+
+    executiveRows.slice(0, 11).forEach((item, index) => {
+      if (!item.active) return;
+      const gross = item.grossDay * daysSales;
+      const calc = payrollComputation({
+        link: item.link,
+        grossMonthly: gross,
+        children: item.children,
+        pension: item.pension,
+        payroll,
+        days: daysSales,
+        fifthMonthlyOverride: item.fifthMonthly,
+      });
+      rows.push({
+        id: item.id,
+        label: `Ejecutivo ${index + 1}`,
+        name: item.name,
+        cargo: "Ejecutivo de ventas",
+        routeArea: "Modelo comercial",
+        link: item.link,
+        regime: item.link === "planilla" ? payroll.regime : "No aplica",
+        days: daysSales,
+        totalIncome: gross,
+        totalDiscounts: calc.totalDiscounts,
+        netPay: calc.netPay,
+        companyCost: calc.companyCost,
+        details: {
+          income: [
+            { label: "Bruto comercial", amount: gross },
+            { label: "Comisión", amount: item.commissionAmountDay * daysSales },
+            { label: "Bono cobertura", amount: item.coverageBonusDay * daysSales },
+            { label: "Viático", amount: item.viaticDay * daysSales },
+          ],
+          discounts: item.link === "planilla" ? [{ label: `Pensión ${calc.pensionUsed}`, amount: calc.pensionDiscount }, { label: "Quinta categoría", amount: calc.fifthCategory }] : [],
+          employer: item.link === "planilla" ? [{ label: "Vacaciones microempresa", amount: calc.vacationMonthly }, { label: "Seguro vida ley", amount: calc.lifeMonthly }, { label: "SIS / seguro microempresa", amount: calc.sisMonthly }] : [],
+          observation: item.link === "planilla" ? "Régimen MYPE microempresa: no considera CTS, gratificación, bonificación extraordinaria ni EsSalud 9%." : "Personal freelance: no aplica beneficios laborales, AFP/ONP ni aportes de empleador.",
+        },
+      });
+    });
+
+    const totalDrivers = routeRows.reduce((sum, item) => sum + item.drivers, 0);
+    const totalAssistants = routeRows.reduce((sum, item) => sum + item.assistants, 0);
+    const driverBonus = routeRows.reduce((sum, item) => sum + item.driverBonus, 0);
+    const assistantBonus = routeRows.reduce((sum, item) => sum + item.assistantBonus, 0);
+    const driverLink = driver.link;
+    const assistantLink = assistant.link;
+
+    Array.from({ length: Math.min(totalDrivers, 2) }, (_, index) => {
+      const baseDay = driverLink === "freelance" ? driver.freelanceFixedDay : ((driver.monthlyBase > 0 ? driver.monthlyBase : payroll.rmv) + driver.punctualityBonusMonthly + familyAllowance(driver.children, payroll)) / general.daysMonth;
+      const bonusDay = totalDrivers > 0 ? driverBonus / totalDrivers : 0;
+      const gross = (baseDay + bonusDay) * daysDelivery;
+      const calc = payrollComputation({ link: driverLink, grossMonthly: gross, children: driver.children, pension: driver.pension, payroll, days: daysDelivery });
+      rows.push({
+        id: `driver-${index + 1}`,
+        label: `Chofer ${index + 1}`,
+        name: index === 0 ? driver.name : `${driver.name} ${index + 1}`,
+        cargo: "Chofer",
+        routeArea: "Reparto",
+        link: driverLink,
+        regime: driverLink === "planilla" ? payroll.regime : "No aplica",
+        days: daysDelivery,
+        totalIncome: gross,
+        totalDiscounts: calc.totalDiscounts,
+        netPay: calc.netPay,
+        companyCost: calc.companyCost,
+        details: {
+          income: [{ label: "Fijo / básico", amount: baseDay * daysDelivery }, { label: "Bono efectividad", amount: bonusDay * daysDelivery }],
+          discounts: driverLink === "planilla" ? [{ label: `Pensión ${calc.pensionUsed}`, amount: calc.pensionDiscount }, { label: "Quinta categoría", amount: calc.fifthCategory }] : [],
+          employer: driverLink === "planilla" ? [{ label: "Vacaciones microempresa", amount: calc.vacationMonthly }, { label: "Seguro vida ley", amount: calc.lifeMonthly }, { label: "SIS / seguro microempresa", amount: calc.sisMonthly }] : [],
+          observation: driverLink === "planilla" ? "Chofer en planilla MYPE microempresa." : "Chofer freelance sin beneficios laborales.",
+        },
+      });
+    });
+
+    Array.from({ length: Math.min(totalAssistants, 2) }, (_, index) => {
+      const baseDay = assistantLink === "freelance" ? assistant.freelanceFixedDay : ((assistant.monthlyBase > 0 ? assistant.monthlyBase : payroll.rmv) + assistant.punctualityBonusMonthly + familyAllowance(assistant.children, payroll)) / general.daysMonth;
+      const bonusDay = totalAssistants > 0 ? assistantBonus / totalAssistants : 0;
+      const gross = (baseDay + bonusDay) * daysDelivery;
+      const calc = payrollComputation({ link: assistantLink, grossMonthly: gross, children: assistant.children, pension: assistant.pension, payroll, days: daysDelivery });
+      rows.push({
+        id: `assistant-${index + 1}`,
+        label: `Auxiliar ${index + 1}`,
+        name: index === 0 ? assistant.name : `${assistant.name} ${index + 1}`,
+        cargo: "Auxiliar",
+        routeArea: "Reparto",
+        link: assistantLink,
+        regime: assistantLink === "planilla" ? payroll.regime : "No aplica",
+        days: daysDelivery,
+        totalIncome: gross,
+        totalDiscounts: calc.totalDiscounts,
+        netPay: calc.netPay,
+        companyCost: calc.companyCost,
+        details: {
+          income: [{ label: "Fijo / básico", amount: baseDay * daysDelivery }, { label: "Bono efectividad", amount: bonusDay * daysDelivery }],
+          discounts: assistantLink === "planilla" ? [{ label: `Pensión ${calc.pensionUsed}`, amount: calc.pensionDiscount }, { label: "Quinta categoría", amount: calc.fifthCategory }] : [],
+          employer: assistantLink === "planilla" ? [{ label: "Vacaciones microempresa", amount: calc.vacationMonthly }, { label: "Seguro vida ley", amount: calc.lifeMonthly }, { label: "SIS / seguro microempresa", amount: calc.sisMonthly }] : [],
+          observation: assistantLink === "planilla" ? "Auxiliar en planilla MYPE microempresa." : "Auxiliar freelance sin beneficios laborales.",
+        },
+      });
+    });
+
+    if (supervisorCalc.enabled) {
+      rows.push({
+        id: "supervisor",
+        label: "Supervisor",
+        name: supervisor.name,
+        cargo: "Supervisor de ventas",
+        routeArea: "Ventas",
+        link: supervisor.link,
+        regime: supervisor.link === "planilla" ? payroll.regime : "No aplica",
+        days: general.daysMonth,
+        totalIncome: supervisorCalc.grossMonthly,
+        totalDiscounts: supervisorCalc.planilla.totalDiscounts,
+        netPay: supervisorCalc.planilla.netPay,
+        companyCost: supervisorCalc.planilla.companyCost,
+        details: {
+          income: [{ label: "Básico + variable + viático", amount: supervisorCalc.grossMonthly }],
+          discounts: supervisor.link === "planilla" ? [{ label: `Pensión ${supervisorCalc.planilla.pensionUsed}`, amount: supervisorCalc.planilla.pensionDiscount }, { label: "Quinta categoría", amount: supervisorCalc.planilla.fifthCategory }] : [],
+          employer: supervisor.link === "planilla" ? [{ label: "Vacaciones microempresa", amount: supervisorCalc.planilla.vacationMonthly }, { label: "Seguro vida ley", amount: supervisorCalc.planilla.lifeMonthly }, { label: "SIS / seguro microempresa", amount: supervisorCalc.planilla.sisMonthly }] : [],
+          observation: supervisorCalc.reachesSales ? "Supervisor genera variable y viático." : "Supervisor mantiene básico; no genera comisión ni viático por no alcanzar venta acumulada.",
+        },
+      });
+    }
+
+    if (chiefCalc.enabled) {
+      rows.push({
+        id: "chief",
+        label: "Jefe",
+        name: chief.name,
+        cargo: "Jefe de ventas",
+        routeArea: "Ventas",
+        link: chief.link,
+        regime: chief.link === "planilla" ? payroll.regime : "No aplica",
+        days: general.daysMonth,
+        totalIncome: chiefCalc.grossMonthly,
+        totalDiscounts: chiefCalc.planilla.totalDiscounts,
+        netPay: chiefCalc.planilla.netPay,
+        companyCost: chiefCalc.planilla.companyCost,
+        details: {
+          income: [{ label: "Básico + extra + variable", amount: chiefCalc.grossMonthly }],
+          discounts: chief.link === "planilla" ? [{ label: `Pensión ${chiefCalc.planilla.pensionUsed}`, amount: chiefCalc.planilla.pensionDiscount }, { label: "Quinta categoría", amount: chiefCalc.planilla.fifthCategory }] : [],
+          employer: chief.link === "planilla" ? [{ label: "Vacaciones microempresa", amount: chiefCalc.planilla.vacationMonthly }, { label: "Seguro vida ley", amount: chiefCalc.planilla.lifeMonthly }, { label: "SIS / seguro microempresa", amount: chiefCalc.planilla.sisMonthly }] : [],
+          observation: "Jefe activado por cantidad de ejecutivos comisionables.",
+        },
+      });
+    }
+
+    return rows;
+  }, [assistant, chief, chiefCalc, commercialSummary.deliveryDays, commercialSummary.salesDays, driver, executiveRows, general.daysMonth, payroll, routeRows, supervisor, supervisorCalc]);
+
+  const selectedPayslip = personnelRows.find((item) => item.id === payslipForm.workerId) ?? personnelRows[0];
+
+  const reading = useMemo(() => {
+    const ratio = financial.breakEven > 0 ? commercialSummary.dailySales / financial.breakEven : 0;
+    const state = ratio < 0.95 ? "Por debajo del punto de equilibrio" : ratio < 1.05 ? "En equilibrio" : ratio < 1.35 ? "Rentable" : "Muy rentable";
+    return {
+      state,
+      pressure: ratio < 1 ? "Alta: la venta diaria no cubre la estructura actual." : ratio < 1.2 ? "Media: hay margen, pero todavía sensible a devoluciones y caídas de cobertura." : "Controlada: la venta supera el punto de equilibrio con colchón operativo.",
+      supervisorState: supervisorCalc.enabled ? (supervisorCalc.reachesSales ? "Activo con variable y viático." : "Activo solo con básico por venta acumulada insuficiente.") : "No activo por cantidad de ejecutivos comisionables.",
+      chiefState: chiefCalc.enabled ? "Activo por escala comercial." : "No activo; requiere 8 ejecutivos comisionables.",
+      commercialAdvice: financial.netProfitDay < 0 ? "Subir ticket, cobertura o margen antes de agregar más personal." : "Mantener foco en ejecutivos comisionables y ticket ponderado.",
+      logisticAdvice: deliverySummary.coveragePreventa > deliverySummary.cars * delivery.capacityPerCar ? "Agregar capacidad de reparto o redistribuir rutas." : "Capacidad de reparto alineada con cobertura preventa.",
+      financialAdvice: financial.netProfitMonthly < general.targetProfitMonthly ? "La utilidad proyectada está debajo del objetivo. Revisar gastos fijos, renta BI, combustible y escala de comisiones." : "La utilidad proyectada cubre el objetivo mensual configurado.",
+    };
+  }, [chiefCalc.enabled, commercialSummary.dailySales, delivery.capacityPerCar, deliverySummary.cars, deliverySummary.coveragePreventa, financial.breakEven, financial.netProfitDay, financial.netProfitMonthly, general.targetProfitMonthly, supervisorCalc.enabled, supervisorCalc.reachesSales]);
+
+  const chartData = useMemo(
+    () => [
+      { name: "Venta", valor: financial.salesWithIgvDay },
+      { name: "PE", valor: financial.breakEven },
+      { name: "Utilidad", valor: financial.netProfitDay },
+      { name: "Variables", valor: financial.variableDay },
+      { name: "Fijos", valor: fixedTotals.dailyBase },
+    ],
+    [financial, fixedTotals.dailyBase],
+  );
+
+  const syncRoutes = () => {
+    const capacity = Math.max(delivery.capacityPerCar, 1);
+    let remaining = commercialSummary.totalCoverage;
+    setRoutes((current) =>
+      current.map((route) => {
+        const assigned = remaining > 0 ? Math.min(capacity, remaining) : 0;
+        remaining -= assigned;
+        return {
+          ...route,
+          coveragePreventa: assigned,
+          coverageEffective: assigned,
+          assistantCount: assigned > 0 ? Math.ceil(assigned / capacity) : 0,
+          driverLink: driver.link,
+          assistantLink: assistant.link,
+        };
+      }),
+    );
+  };
+
+  const saveHistory = () => {
+    const next: HistoryRow = {
+      id: uid(),
+      workDate: historyForm.workDate,
+      from: historyForm.from,
+      to: historyForm.to,
+      dailySales: financial.salesWithIgvDay,
+      monthlySales: commercialSummary.monthlySales,
+      totalCoverage: commercialSummary.totalCoverage,
+      breakEven: financial.breakEven,
+      profitableQuota: financial.profitableQuotaPerExecutive,
+      netDailyProfit: financial.netProfitDay,
+      netMonthlyProfit: financial.netProfitMonthly,
+      fixedExpenseDay: fixedTotals.dailyBase,
+      variableExpenseDay: financial.variableDay,
+      activeExecutives: commercialSummary.activeCount,
+      commissionableExecutives: commercialSummary.commissionableCount,
+      freelanceStaff: personnelRows.filter((item) => item.link === "freelance").length,
+      payrollStaff: personnelRows.filter((item) => item.link === "planilla").length,
+      regime: payroll.regime,
+    };
+    setHistory((current) => [next, ...current]);
+  };
+
+  const updateFixedExpense = (id: string, patch: Partial<FixedExpense>) => {
+    setFixedExpenses((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const updateExecutive = (id: string, patch: Partial<Executive>) => {
+    setExecutives((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const updateRoute = (id: string, patch: Partial<RouteRow>) => {
+    setRoutes((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const renderCommissionTable = (tiers: CommissionTier[], setTiers: (value: CommissionTier[] | ((previous: CommissionTier[]) => CommissionTier[])) => void, defaults: CommissionTier[]) => (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setTiers((current) => [...current, { id: uid(), from: 0, to: null, ratePct: 0 }])}>Agregar tramo</Button>
+        <Button variant="outline" onClick={() => setTiers(defaults)}>Restaurar escala sugerida</Button>
+      </div>
+      <TableWrap>
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="p-3">Desde venta</th>
+              <th className="p-3">Hasta venta</th>
+              <th className="p-3">Comisión %</th>
+              <th className="p-3">Acción eliminar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tiers.map((tier) => (
+              <tr key={tier.id} className="border-t border-slate-100">
+                <td className="p-2"><NumberInput value={tier.from} onChange={(value) => setTiers((current) => current.map((item) => (item.id === tier.id ? { ...item, from: value } : item)))} /></td>
+                <td className="p-2">
+                  <div className="flex items-center gap-2">
+                    <NumberInput value={tier.to ?? 0} onChange={(value) => setTiers((current) => current.map((item) => (item.id === tier.id ? { ...item, to: value } : item)))} />
+                    <Button variant="ghost" onClick={() => setTiers((current) => current.map((item) => (item.id === tier.id ? { ...item, to: null } : item)))}>Sin límite</Button>
+                  </div>
+                </td>
+                <td className="p-2"><NumberInput value={tier.ratePct} onChange={(value) => setTiers((current) => current.map((item) => (item.id === tier.id ? { ...item, ratePct: value } : item)))} /></td>
+                <td className="p-2"><Button variant="danger" onClick={() => setTiers((current) => current.filter((item) => item.id !== tier.id))}>Eliminar</Button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+    </div>
+  );
+
+  const renderWorkerFields = (worker: DeliveryWorker, setWorker: (value: DeliveryWorker | ((previous: DeliveryWorker) => DeliveryWorker)) => void) => (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Field label="Nombre del trabajador"><TextInput value={worker.name} onChange={(value) => setWorker((current) => ({ ...current, name: value }))} /></Field>
+      <Field label="Vínculo"><SelectInput<LinkType> value={worker.link} onChange={(value) => setWorker((current) => ({ ...current, link: value }))} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></Field>
+      <Field label="Fijo freelance día"><NumberInput value={worker.freelanceFixedDay} onChange={(value) => setWorker((current) => ({ ...current, freelanceFixedDay: value }))} /></Field>
+      <Field label="Base mensual planilla"><NumberInput value={worker.monthlyBase} onChange={(value) => setWorker((current) => ({ ...current, monthlyBase: value }))} /></Field>
+      <Field label="Bono puntualidad mensual"><NumberInput value={worker.punctualityBonusMonthly} onChange={(value) => setWorker((current) => ({ ...current, punctualityBonusMonthly: value }))} /></Field>
+      <Field label="Hijos"><NumberInput value={worker.children} onChange={(value) => setWorker((current) => ({ ...current, children: Math.round(value) }))} step="1" /></Field>
+      <Field label="Pensión"><SelectInput<PensionType> value={worker.pension} onChange={(value) => setWorker((current) => ({ ...current, pension: value }))} options={["", "Ninguno", "ONP", "Habitat", "Integra", "Prima", "Profuturo"].map((value) => ({ label: value || "Vacío / usar ONP", value: value as PensionType }))} /></Field>
+      <Field label="Bono 100%"><NumberInput value={worker.bonus100} onChange={(value) => setWorker((current) => ({ ...current, bonus100: value }))} /></Field>
+      <Field label="Bono 95%"><NumberInput value={worker.bonus95} onChange={(value) => setWorker((current) => ({ ...current, bonus95: value }))} /></Field>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #printable-payslip, #printable-payslip * { visibility: visible; }
+          #printable-payslip { position: absolute; left: 0; top: 0; width: 100%; background: white; padding: 24px; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto max-w-7xl px-4 py-6">
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-500">ARMORA MULTIMARKAS</p>
+          <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-4xl">Aplicativo de Punto de Equilibrio, Rentabilidad, Reparto y Planilla MYPE</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">Modelo operativo para distribuidora de productos de consumo masivo en Perú. Editable, persistente en localStorage y responsive.</p>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl space-y-5 px-4 py-5">
+        <nav className="no-print grid gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { key: "commercial", label: "Modelo comercial" },
+            { key: "delivery", label: "Reparto y costos" },
+            { key: "results", label: "Resultados" },
+            { key: "reading", label: "Lectura gerencial" },
+            { key: "history", label: "Histórico" },
+            { key: "payslips", label: "Boletas de pago" },
+          ].map((item) => (
+            <Button key={item.key} variant={tab === item.key ? "default" : "ghost"} onClick={() => setTab(item.key as TabKey)}>{item.label}</Button>
+          ))}
+        </nav>
+
+        {tab === "commercial" ? (
+          <div className="space-y-5">
+            <CollapsibleSection id="parametros-generales" title="Parámetros generales" subtitle="Días operativos, IGV, margen y parámetros transversales." defaultOpen>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Días del mes"><NumberInput value={general.daysMonth} onChange={(value) => setGeneral((current) => ({ ...current, daysMonth: value }))} step="1" /></Field>
+                <Field label="Días preventa hasta 2 ejecutivos"><NumberInput value={general.daysPreventa2} onChange={(value) => setGeneral((current) => ({ ...current, daysPreventa2: value }))} step="1" /></Field>
+                <Field label="Días reparto hasta 2 ejecutivos"><NumberInput value={general.daysReparto2} onChange={(value) => setGeneral((current) => ({ ...current, daysReparto2: value }))} step="1" /></Field>
+                <Field label="IGV %"><NumberInput value={general.igvPct} onChange={(value) => setGeneral((current) => ({ ...current, igvPct: value }))} /></Field>
+                <Field label="Margen bruto C/IGV %"><NumberInput value={general.grossMarginWithIgvPct} onChange={(value) => setGeneral((current) => ({ ...current, grossMarginWithIgvPct: value }))} /></Field>
+                <Field label="Utilidad objetivo mensual"><NumberInput value={general.targetProfitMonthly} onChange={(value) => setGeneral((current) => ({ ...current, targetProfitMonthly: value }))} /></Field>
+                <Field label="Base días gastos fijos"><NumberInput value={general.fixedBaseDays} onChange={(value) => setGeneral((current) => ({ ...current, fixedBaseDays: value }))} step="1" /></Field>
+                <Field label="Gerencia día"><NumberInput value={general.managementDay} onChange={(value) => setGeneral((current) => ({ ...current, managementDay: value }))} /></Field>
+                <Field label="Otros variables día"><NumberInput value={general.otherVariablesDay} onChange={(value) => setGeneral((current) => ({ ...current, otherVariablesDay: value }))} /></Field>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <MetricCard title="Días preventa usados" value={`${commercialSummary.salesDays}`} caption="Hasta 2 ejecutivos usa regla 13 días." />
+                <MetricCard title="Días reparto usados" value={`${commercialSummary.deliveryDays}`} caption="Hasta 2 ejecutivos usa regla 13 días." />
+                <MetricCard title="Venta mensual proyectada" value={money(commercialSummary.monthlySales)} />
+              </div>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="gastos-fijos" title="Detalle editable de gastos fijos" subtitle="Total mensual activo y gasto fijo diario base.">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Button onClick={() => setFixedExpenses((current) => [...current, { id: uid(), active: true, quantity: 1, concept: "Nuevo gasto fijo", payDate: "", monthlyUnitCost: 0 }])}>Agregar gasto fijo</Button>
+                <Badge tone="blue">Total mensual: {money(fixedTotals.activeMonthly)}</Badge>
+                <Badge tone="green">Diario base: {money(fixedTotals.dailyBase)}</Badge>
+              </div>
+              <TableWrap>
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="p-3">Activo</th>
+                      <th className="p-3">Cantidad o %</th>
+                      <th className="p-3">Concepto</th>
+                      <th className="p-3">Fecha de pago</th>
+                      <th className="p-3">Costo unitario mensual</th>
+                      <th className="p-3">Total mensual</th>
+                      <th className="p-3">Total diario base</th>
+                      <th className="p-3">Acción eliminar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fixedExpenses.map((item) => {
+                      const monthly = item.quantity * item.monthlyUnitCost;
+                      return (
+                        <tr key={item.id} className="border-t border-slate-100">
+                          <td className="p-2"><CheckboxInput checked={item.active} onChange={(checked) => updateFixedExpense(item.id, { active: checked })} /></td>
+                          <td className="p-2"><NumberInput value={item.quantity} onChange={(value) => updateFixedExpense(item.id, { quantity: value })} /></td>
+                          <td className="p-2"><TextInput value={item.concept} onChange={(value) => updateFixedExpense(item.id, { concept: value })} /></td>
+                          <td className="p-2"><TextInput value={item.payDate} onChange={(value) => updateFixedExpense(item.id, { payDate: value })} placeholder="Ej. 15" /></td>
+                          <td className="p-2"><NumberInput value={item.monthlyUnitCost} onChange={(value) => updateFixedExpense(item.id, { monthlyUnitCost: value })} /></td>
+                          <td className="p-3 font-bold text-slate-900">{money(monthly)}</td>
+                          <td className="p-3 font-bold text-slate-900">{money(item.active ? monthly / Math.max(general.fixedBaseDays, 1) : 0)}</td>
+                          <td className="p-2"><Button variant="danger" onClick={() => setFixedExpenses((current) => current.filter((row) => row.id !== item.id))}>Eliminar</Button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="comisiones-freelance" title="Tabla de comisiones ejecutivos freelance" subtitle="Escala visible, editable y persistente.">
+              {renderCommissionTable(freelanceTiers, setFreelanceTiers, freelanceTierDefaults)}
+            </CollapsibleSection>
+
+            <CollapsibleSection id="comisiones-planilla" title="Tabla de comisiones ejecutivos planilla" subtitle="Escala visible, editable y persistente.">
+              {renderCommissionTable(payrollTiers, setPayrollTiers, payrollTierDefaults)}
+            </CollapsibleSection>
+
+            <CollapsibleSection id="modelo-11-ejecutivos" title="Modelo comercial de 11 ejecutivos" subtitle="Ventas, cobertura, comisiones, viáticos, descuentos y costo empresa diario.">
+              <TableWrap>
+                <table className="w-full min-w-[2100px] text-xs">
+                  <thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-500">
+                    <tr>
+                      {["Activo", "Nombre", "Vínculo", "Tipo", "Ticket", "Venta mínima", "Base planilla", "Hijos", "Asignación", "Pensión", "Pensión usada", "Tasa", "Desc. pensión mensual", "Quinta mensual", "Cobertura", "Comisión %", "Comisión monto", "Bono cobertura", "Viático", "Bruto día", "Descuentos día", "Neto día", "Vacaciones día", "Seguro vida día", "SIS día", "Costo empresa día"].map((head) => <th key={head} className="p-3">{head}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {executiveRows.map((item) => (
+                      <tr key={item.id} className="border-t border-slate-100 align-top">
+                        <td className="p-2"><CheckboxInput checked={item.active} onChange={(checked) => updateExecutive(item.id, { active: checked })} /></td>
+                        <td className="p-2"><TextInput value={item.name} onChange={(value) => updateExecutive(item.id, { name: value })} className="w-40" /></td>
+                        <td className="p-2"><SelectInput<LinkType> value={item.link} onChange={(value) => updateExecutive(item.id, { link: value })} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></td>
+                        <td className="p-2"><SelectInput<ExecutiveType> value={item.type} onChange={(value) => updateExecutive(item.id, { type: value })} options={[{ label: "a_pie", value: "a_pie" }, { label: "motorizado", value: "motorizado" }, { label: "sin_viatico", value: "sin_viatico" }]} /></td>
+                        <td className="p-2"><NumberInput value={item.avgTicket} onChange={(value) => updateExecutive(item.id, { avgTicket: value })} /></td>
+                        <td className="p-2"><NumberInput value={item.minDailySale} onChange={(value) => updateExecutive(item.id, { minDailySale: value })} /></td>
+                        <td className="p-2"><NumberInput value={item.monthlyBase} onChange={(value) => updateExecutive(item.id, { monthlyBase: value })} /></td>
+                        <td className="p-2"><NumberInput value={item.children} onChange={(value) => updateExecutive(item.id, { children: Math.round(value) })} step="1" /></td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(familyAllowance(item.children, payroll)) : "No aplica"}</td>
+                        <td className="p-2"><SelectInput<PensionType> value={item.pension} onChange={(value) => updateExecutive(item.id, { pension: value })} options={["", "Ninguno", "ONP", "Habitat", "Integra", "Prima", "Profuturo"].map((value) => ({ label: value || "Vacío", value: value as PensionType }))} /></td>
+                        <td className="p-3">{item.link === "planilla" ? item.pensionUsed : "No aplica"}</td>
+                        <td className="p-3">{item.link === "planilla" ? pct(item.pensionRate) : "No aplica"}</td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(item.pensionDiscountMonthly) : "No aplica"}</td>
+                        <td className="p-2"><NumberInput value={item.fifthMonthly} onChange={(value) => updateExecutive(item.id, { fifthMonthly: value })} /></td>
+                        <td className="p-3 font-bold">{item.coverage}</td>
+                        <td className="p-3 font-bold">{pct(item.commissionRate)}</td>
+                        <td className="p-3 font-bold">{money(item.commissionAmountDay)}</td>
+                        <td className="p-3 font-bold">{money(item.coverageBonusDay)}</td>
+                        <td className="p-3 font-bold">{money(item.viaticDay)}</td>
+                        <td className="p-3 font-bold">{money(item.grossDay)}</td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(item.discountsDay) : "No aplica"}</td>
+                        <td className="p-3 font-bold">{money(item.netDay)}</td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(item.vacationDay) : "No aplica"}</td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(item.lifeDay) : "No aplica"}</td>
+                        <td className="p-3 font-bold">{item.link === "planilla" ? money(item.sisDay) : "No aplica"}</td>
+                        <td className="p-3 font-black">{money(item.companyCostDay)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="planilla-mype" title="Parámetros de planilla MYPE - microempresa" subtitle="RMV, UIT, asignación familiar, pensiones, seguro vida, SIS y vacaciones.">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Régimen laboral"><TextInput value={payroll.regime} onChange={(value) => setPayroll((current) => ({ ...current, regime: value }))} /></Field>
+                <Field label="RMV"><NumberInput value={payroll.rmv} onChange={(value) => setPayroll((current) => ({ ...current, rmv: value }))} /></Field>
+                <Field label="UIT"><NumberInput value={payroll.uit} onChange={(value) => setPayroll((current) => ({ ...current, uit: value }))} /></Field>
+                <Field label="Asignación familiar % RMV"><NumberInput value={payroll.familyPctRmv} onChange={(value) => setPayroll((current) => ({ ...current, familyPctRmv: value }))} /></Field>
+                <Field label="ONP %"><NumberInput value={payroll.onpPct} onChange={(value) => setPayroll((current) => ({ ...current, onpPct: value }))} /></Field>
+                <Field label="AFP Habitat %"><NumberInput value={payroll.afpHabitatPct} onChange={(value) => setPayroll((current) => ({ ...current, afpHabitatPct: value }))} /></Field>
+                <Field label="AFP Integra %"><NumberInput value={payroll.afpIntegraPct} onChange={(value) => setPayroll((current) => ({ ...current, afpIntegraPct: value }))} /></Field>
+                <Field label="AFP Prima %"><NumberInput value={payroll.afpPrimaPct} onChange={(value) => setPayroll((current) => ({ ...current, afpPrimaPct: value }))} /></Field>
+                <Field label="AFP Profuturo %"><NumberInput value={payroll.afpProfuturoPct} onChange={(value) => setPayroll((current) => ({ ...current, afpProfuturoPct: value }))} /></Field>
+                <Field label="Seguro vida ley diario"><NumberInput value={payroll.lifeInsuranceDay} onChange={(value) => setPayroll((current) => ({ ...current, lifeInsuranceDay: value }))} /></Field>
+                <Field label="SIS / seguro microempresa mensual"><NumberInput value={payroll.sisMonthly} onChange={(value) => setPayroll((current) => ({ ...current, sisMonthly: value }))} /></Field>
+                <Field label="Vacaciones microempresa días/año"><NumberInput value={payroll.vacationDaysYear} onChange={(value) => setPayroll((current) => ({ ...current, vacationDaysYear: value }))} /></Field>
+              </div>
+              <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">Microempresa: no se suma gratificación, CTS, bonificación extraordinaria ni EsSalud 9%. Vacación mensual estimada = remuneración mensual / 24.</p>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="supervisor-jefe" title="Supervisor y jefe de ventas" subtitle="Activación automática por ejecutivos comisionables.">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <h3 className="font-black">Supervisor</h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Field label="Nombre"><TextInput value={supervisor.name} onChange={(value) => setSupervisor((current) => ({ ...current, name: value }))} /></Field>
+                    <Field label="Vínculo"><SelectInput<LinkType> value={supervisor.link} onChange={(value) => setSupervisor((current) => ({ ...current, link: value }))} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></Field>
+                    <Field label="Venta diaria mínima acumulada"><NumberInput value={supervisor.minAccumulatedDailySale} onChange={(value) => setSupervisor((current) => ({ ...current, minAccumulatedDailySale: value }))} /></Field>
+                    <Field label="Básico mensual supervisor"><NumberInput value={supervisor.monthlyBase} onChange={(value) => setSupervisor((current) => ({ ...current, monthlyBase: value }))} /></Field>
+                    <Field label="Comisión mensual por ejecutivo"><NumberInput value={supervisor.monthlyCommissionPerExecutive} onChange={(value) => setSupervisor((current) => ({ ...current, monthlyCommissionPerExecutive: value }))} /></Field>
+                    <Field label="Viático supervisor mensual"><NumberInput value={supervisor.monthlyAllowance} onChange={(value) => setSupervisor((current) => ({ ...current, monthlyAllowance: value }))} /></Field>
+                    <Field label="Hijos"><NumberInput value={supervisor.children} onChange={(value) => setSupervisor((current) => ({ ...current, children: Math.round(value) }))} step="1" /></Field>
+                    <Field label="Pensión"><SelectInput<PensionType> value={supervisor.pension} onChange={(value) => setSupervisor((current) => ({ ...current, pension: value }))} options={["", "Ninguno", "ONP", "Habitat", "Integra", "Prima", "Profuturo"].map((value) => ({ label: value || "Vacío", value: value as PensionType }))} /></Field>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2"><Badge tone={supervisorCalc.enabled ? "green" : "amber"}>{supervisorCalc.enabled ? "Activo" : "No activo"}</Badge><Badge>{money(supervisorCalc.grossMonthly)} mensual</Badge></div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <h3 className="font-black">Jefe de ventas</h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Field label="Nombre"><TextInput value={chief.name} onChange={(value) => setChief((current) => ({ ...current, name: value }))} /></Field>
+                    <Field label="Vínculo"><SelectInput<LinkType> value={chief.link} onChange={(value) => setChief((current) => ({ ...current, link: value }))} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></Field>
+                    <Field label="Cantidad de jefes"><NumberInput value={chief.count} onChange={(value) => setChief((current) => ({ ...current, count: Math.round(value) }))} step="1" /></Field>
+                    <Field label="Base mensual jefe"><NumberInput value={chief.monthlyBase} onChange={(value) => setChief((current) => ({ ...current, monthlyBase: value }))} /></Field>
+                    <Field label="Extra mensual jefe"><NumberInput value={chief.monthlyExtra} onChange={(value) => setChief((current) => ({ ...current, monthlyExtra: value }))} /></Field>
+                    <Field label="Variable mensual por ejecutivo"><NumberInput value={chief.monthlyVariablePerExecutive} onChange={(value) => setChief((current) => ({ ...current, monthlyVariablePerExecutive: value }))} /></Field>
+                    <Field label="Hijos"><NumberInput value={chief.children} onChange={(value) => setChief((current) => ({ ...current, children: Math.round(value) }))} step="1" /></Field>
+                    <Field label="Pensión"><SelectInput<PensionType> value={chief.pension} onChange={(value) => setChief((current) => ({ ...current, pension: value }))} options={["", "Ninguno", "ONP", "Habitat", "Integra", "Prima", "Profuturo"].map((value) => ({ label: value || "Vacío", value: value as PensionType }))} /></Field>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2"><Badge tone={chiefCalc.enabled ? "green" : "amber"}>{chiefCalc.enabled ? "Activo" : "No activo"}</Badge><Badge>{money(chiefCalc.grossMonthly)} mensual</Badge></div>
+                </div>
+              </div>
+            </CollapsibleSection>
+          </div>
+        ) : null}
+
+        {tab === "delivery" ? (
+          <div className="space-y-5">
+            <CollapsibleSection id="parametros-reparto" title="Parámetros de reparto" subtitle="Vehículos, capacidad, combustibles y renta BI.">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Costo por vehículo de reparto/día"><NumberInput value={delivery.vehicleCostDay} onChange={(value) => setDelivery((current) => ({ ...current, vehicleCostDay: value }))} /></Field>
+                <Field label="Capacidad cobertura por carro"><NumberInput value={delivery.capacityPerCar} onChange={(value) => setDelivery((current) => ({ ...current, capacityPerCar: value }))} step="1" /></Field>
+                <Field label="Diesel D2 día"><NumberInput value={delivery.dieselDay} onChange={(value) => setDelivery((current) => ({ ...current, dieselDay: value }))} /></Field>
+                <Field label="GNV día"><NumberInput value={delivery.gnvDay} onChange={(value) => setDelivery((current) => ({ ...current, gnvDay: value }))} /></Field>
+                <Field label="Gasolina regular día"><NumberInput value={delivery.gasolineDay} onChange={(value) => setDelivery((current) => ({ ...current, gasolineDay: value }))} /></Field>
+                <Field label="Renta mensual BI %"><NumberInput value={delivery.rentBiPct} onChange={(value) => setDelivery((current) => ({ ...current, rentBiPct: value }))} /></Field>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3"><MetricCard title="Ventas S/IGV" value={money(financial.salesWithoutIgvDay)} /><MetricCard title="Renta 1% BI" value={money(financial.rentBiDay)} /><MetricCard title="Carros usados" value={`${deliverySummary.cars}`} /></div>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="chofer" title="Chofer" subtitle="Fijo freelance, base planilla, bono puntualidad, hijos, pensión y bono de efectividad.">{renderWorkerFields(driver, setDriver)}</CollapsibleSection>
+            <CollapsibleSection id="auxiliar" title="Auxiliar" subtitle="Fijo freelance, base planilla, bono puntualidad, hijos, pensión y bono de efectividad.">{renderWorkerFields(assistant, setAssistant)}</CollapsibleSection>
+
+            <CollapsibleSection id="rutas-carros" title="Rutas, carros, choferes y auxiliares" subtitle="Cobertura preventa, efectiva, unidades, personal y costo día.">
+              <div className="mb-3 flex flex-wrap gap-2">
+                <Button onClick={syncRoutes}>Sincronizar cobertura preventa con coberturas</Button>
+                <Badge tone="blue">Cobertura ejecutivos: {commercialSummary.totalCoverage}</Badge>
+                <Badge tone="green">Cobertura reparto: {deliverySummary.coveragePreventa}</Badge>
+                <Badge>Carros: {deliverySummary.cars}</Badge>
+              </div>
+              <TableWrap>
+                <table className="w-full min-w-[1750px] text-xs">
+                  <thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-500">
+                    <tr>
+                      {["Ruta", "Estado", "Cobertura preventa", "Cobertura efectiva", "# Carros", "Efectividad", "# Chofer", "Vínculo chofer", "Costo laboral choferes día", "Bono chofer aplicado", "Total bono chofer", "# Auxiliar", "Vínculo auxiliar", "Costo laboral auxiliares día", "Bono auxiliar aplicado", "Total bono auxiliar", "Costo día"].map((head) => <th key={head} className="p-3">{head}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {routeRows.map((route) => (
+                      <tr key={route.id} className="border-t border-slate-100">
+                        <td className="p-2"><TextInput value={route.route} onChange={(value) => updateRoute(route.id, { route: value })} className="w-28" /></td>
+                        <td className="p-3"><Badge tone={route.active ? "green" : "amber"}>{route.active ? "Activa" : "Inactiva"}</Badge></td>
+                        <td className="p-2"><NumberInput value={route.coveragePreventa} onChange={(value) => updateRoute(route.id, { coveragePreventa: Math.round(value) })} step="1" /></td>
+                        <td className="p-2"><NumberInput value={route.coverageEffective} onChange={(value) => updateRoute(route.id, { coverageEffective: Math.round(value) })} step="1" /></td>
+                        <td className="p-3 font-bold">{route.cars}</td>
+                        <td className="p-3 font-bold">{pct(route.effectiveness * 100)}</td>
+                        <td className="p-3 font-bold">{route.drivers}</td>
+                        <td className="p-2"><SelectInput<LinkType> value={route.driverLink} onChange={(value) => updateRoute(route.id, { driverLink: value })} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></td>
+                        <td className="p-3 font-bold">{money(route.driverLabor.cost)}</td>
+                        <td className="p-3 font-bold">{money(route.driverBonusFactor)}</td>
+                        <td className="p-3 font-bold">{money(route.driverBonus)}</td>
+                        <td className="p-2"><NumberInput value={route.assistantCount} onChange={(value) => updateRoute(route.id, { assistantCount: Math.round(value) })} step="1" /></td>
+                        <td className="p-2"><SelectInput<LinkType> value={route.assistantLink} onChange={(value) => updateRoute(route.id, { assistantLink: value })} options={[{ label: "freelance", value: "freelance" }, { label: "planilla", value: "planilla" }]} /></td>
+                        <td className="p-3 font-bold">{money(route.assistantLabor.cost)}</td>
+                        <td className="p-3 font-bold">{money(route.assistantBonusFactor)}</td>
+                        <td className="p-3 font-bold">{money(route.assistantBonus)}</td>
+                        <td className="p-3 font-black">{money(route.costDay)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+          </div>
+        ) : null}
+
+        {tab === "results" ? (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <MetricCard title="Venta diaria" value={money(financial.salesWithIgvDay)} />
+              <MetricCard title="Venta mensual" value={money(commercialSummary.monthlySales)} />
+              <MetricCard title="Margen bruto" value={money(financial.grossProfitWithoutIgvDay)} caption="S/IGV diario" />
+              <MetricCard title="Ticket ponderado" value={money(commercialSummary.ticketWeighted)} />
+              <MetricCard title="Punto de equilibrio" value={money(financial.breakEven)} />
+              <MetricCard title="Punto de equilibrio por ejecutivo" value={money(financial.breakEvenPerExecutive)} />
+              <MetricCard title="Cuota rentable por ejecutivo" value={money(financial.profitableQuotaPerExecutive)} />
+              <MetricCard title="Cobertura rentable diaria" value={`${financial.profitableCoverage}`} />
+              <MetricCard title="Utilidad neta diaria" value={money(financial.netProfitDay)} />
+              <MetricCard title="Utilidad neta mensual" value={money(financial.netProfitMonthly)} />
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h3 className="font-black">Comparativo diario</h3>
+                <div className="mt-3 h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip formatter={(value: unknown) => money(Number(value))} /><Bar dataKey="valor" /></BarChart></ResponsiveContainer></div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h3 className="font-black">Histórico utilidad neta mensual</h3>
+                <div className="mt-3 h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={history.slice().reverse()}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="workDate" /><YAxis /><Tooltip formatter={(value: unknown) => money(Number(value))} /><Area dataKey="netMonthlyProfit" /></AreaChart></ResponsiveContainer></div>
+              </div>
+            </div>
+
+            <CollapsibleSection id="cuadro-resultados" title="Cuadro ejecutivo de resultados" subtitle="Resultados diarios y mensuales con porcentajes sobre venta y margen bruto.">
+              <TableWrap>
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Ítem</th><th className="p-3">Diario</th><th className="p-3">Mensual</th><th className="p-3">% venta C/IGV</th><th className="p-3">% margen bruto</th></tr></thead>
+                  <tbody>
+                    {financial.rows.map((row) => (
+                      <tr key={row.item} className="border-t border-slate-100">
+                        <td className="p-3 font-bold">{row.item}</td>
+                        <td className="p-3">{money(row.day)}</td>
+                        <td className="p-3">{money(row.month)}</td>
+                        <td className="p-3">{row.fixedPct !== undefined ? pct(row.fixedPct) : pct((row.day / Math.max(row.base, 1)) * 100)}</td>
+                        <td className="p-3">{pct((row.day / Math.max(row.marginBase, 1)) * 100)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="tabla-financiera" title="Tabla financiera mensual" subtitle="Estructura mensual sin etiquetas ambiguas.">
+              <TableWrap>
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Ítem</th><th className="p-3">Monto mensual</th></tr></thead>
+                  <tbody>
+                    {financial.monthlyRows.map((row) => (
+                      <tr key={row.item} className="border-t border-slate-100"><td className="p-3 font-bold">{row.item}</td><td className="p-3">{money(row.value)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+
+            <CollapsibleSection id="resumen-neto" title="Resumen neto a pagar del personal" subtitle="Ingresos, descuentos, neto y costo empresa por persona.">
+              <TableWrap>
+                <table className="w-full min-w-[1180px] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{["Personal", "Nombre", "Cargo", "Ruta / Área", "Vínculo", "Régimen", "Días", "Total ingresos", "Total descuentos", "Neto a pagar", "Costo empresa"].map((head) => <th key={head} className="p-3">{head}</th>)}</tr></thead>
+                  <tbody>
+                    {personnelRows.map((row) => (
+                      <tr key={row.id} className="border-t border-slate-100"><td className="p-3 font-bold">{row.label}</td><td className="p-3">{row.name}</td><td className="p-3">{row.cargo}</td><td className="p-3">{row.routeArea}</td><td className="p-3">{row.link}</td><td className="p-3">{row.regime}</td><td className="p-3">{row.days}</td><td className="p-3">{money(row.totalIncome)}</td><td className="p-3">{money(row.totalDiscounts)}</td><td className="p-3 font-black">{money(row.netPay)}</td><td className="p-3 font-black">{money(row.companyCost)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </CollapsibleSection>
+          </div>
+        ) : null}
+
+        {tab === "reading" ? (
+          <CollapsibleSection id="lectura-gerencial" title="Lectura gerencial" subtitle="Diagnóstico automático de equilibrio, rentabilidad, presión comercial y recomendaciones." defaultOpen>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricCard title="Venta diaria" value={money(financial.salesWithIgvDay)} />
+              <MetricCard title="Venta mensual" value={money(commercialSummary.monthlySales)} />
+              <MetricCard title="Días de preventa usados" value={`${commercialSummary.salesDays}`} />
+              <MetricCard title="Punto de equilibrio" value={money(financial.breakEven)} />
+              <MetricCard title="Cuota mínima rentable" value={money(financial.profitableQuotaPerExecutive)} />
+              <MetricCard title="Utilidad neta mensual" value={money(financial.netProfitMonthly)} />
+              <MetricCard title="Estado" value={reading.state} />
+              <MetricCard title="Cobertura total" value={`${commercialSummary.totalCoverage}`} />
+            </div>
+            <div className="mt-5 grid gap-3 lg:grid-cols-2">
+              {[
+                ["Presión comercial", reading.pressure],
+                ["Estado del supervisor", reading.supervisorState],
+                ["Estado del jefe", reading.chiefState],
+                ["Recomendación comercial", reading.commercialAdvice],
+                ["Recomendación logística", reading.logisticAdvice],
+                ["Recomendación financiera", reading.financialAdvice],
+              ].map(([title, text]) => (
+                <div key={title} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><h3 className="font-black text-slate-950">{title}</h3><p className="mt-2 text-sm text-slate-600">{text}</p></div>
+              ))}
+            </div>
+          </CollapsibleSection>
+        ) : null}
+
+        {tab === "history" ? (
+          <CollapsibleSection id="historico" title="Histórico" subtitle="Guardar días de trabajo y comparar evolución.">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Fecha de trabajo"><TextInput value={historyForm.workDate} onChange={(value) => setHistoryForm((current) => ({ ...current, workDate: value }))} /></Field>
+              <Field label="Desde"><TextInput value={historyForm.from} onChange={(value) => setHistoryForm((current) => ({ ...current, from: value }))} /></Field>
+              <Field label="Hasta"><TextInput value={historyForm.to} onChange={(value) => setHistoryForm((current) => ({ ...current, to: value }))} /></Field>
+              <div className="flex items-end"><Button onClick={saveHistory} className="w-full">Guardar día</Button></div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3"><MetricCard title="Registros" value={`${history.length}`} /><MetricCard title="Última utilidad mensual" value={money(history[0]?.netMonthlyProfit ?? 0)} /><MetricCard title="Último punto equilibrio" value={money(history[0]?.breakEven ?? 0)} /></div>
+            <div className="mt-4"><TableWrap><table className="w-full min-w-[1500px] text-xs"><thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-500"><tr>{["Fecha", "Desde", "Hasta", "Venta diaria", "Venta mensual", "Cobertura total", "Punto equilibrio", "Cuota rentable", "Utilidad diaria", "Utilidad mensual", "Gasto fijo diario", "Gastos variables", "Ej. activos", "Ej. comisionables", "Freelance", "Planilla", "Régimen", "Acción"].map((head) => <th key={head} className="p-3">{head}</th>)}</tr></thead><tbody>{history.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="p-3">{row.workDate}</td><td className="p-3">{row.from}</td><td className="p-3">{row.to}</td><td className="p-3">{money(row.dailySales)}</td><td className="p-3">{money(row.monthlySales)}</td><td className="p-3">{row.totalCoverage}</td><td className="p-3">{money(row.breakEven)}</td><td className="p-3">{money(row.profitableQuota)}</td><td className="p-3">{money(row.netDailyProfit)}</td><td className="p-3">{money(row.netMonthlyProfit)}</td><td className="p-3">{money(row.fixedExpenseDay)}</td><td className="p-3">{money(row.variableExpenseDay)}</td><td className="p-3">{row.activeExecutives}</td><td className="p-3">{row.commissionableExecutives}</td><td className="p-3">{row.freelanceStaff}</td><td className="p-3">{row.payrollStaff}</td><td className="p-3">{row.regime}</td><td className="p-3"><Button variant="danger" onClick={() => setHistory((current) => current.filter((item) => item.id !== row.id))}>Eliminar</Button></td></tr>)}</tbody></table></TableWrap></div>
+          </CollapsibleSection>
+        ) : null}
+
+        {tab === "payslips" ? (
+          <CollapsibleSection id="boletas" title="Boletas de pago para imprimir o guardar en PDF" subtitle="Vista imprimible con datos de empresa, trabajador, ingresos, descuentos y costo empresa.">
+            <div className="no-print grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Período inicio"><TextInput value={payslipForm.from} onChange={(value) => setPayslipForm((current) => ({ ...current, from: value }))} /></Field>
+              <Field label="Período fin"><TextInput value={payslipForm.to} onChange={(value) => setPayslipForm((current) => ({ ...current, to: value }))} /></Field>
+              <Field label="Trabajador / cargo"><SelectInput<string> value={selectedPayslip?.id ?? ""} onChange={(value) => setPayslipForm((current) => ({ ...current, workerId: value }))} options={personnelRows.map((row) => ({ label: `${row.label} - ${row.name}`, value: row.id }))} /></Field>
+              <div className="flex items-end"><Button onClick={() => window.print()} className="w-full">Imprimir / guardar PDF</Button></div>
+            </div>
+            {selectedPayslip ? (
+              <div id="printable-payslip" className="mt-5 rounded-2xl border border-slate-300 bg-white p-6 text-sm">
+                <div className="grid gap-4 border-b border-slate-300 pb-4 sm:grid-cols-2">
+                  <div><h2 className="text-xl font-black">BOLETA DE PAGO</h2><p className="mt-1 font-bold">MMORGAV SERVICIOS GENERALES SOCIEDAD ANONIMA CERRADA</p><p>RUC: 20612382256</p><p>CAL. CENTENARIO 159 URB. BREÑA DPTO. 201</p><p>BREÑA - LIMA - LIMA</p></div>
+                  <div className="sm:text-right"><p><b>Período:</b> {payslipForm.from} al {payslipForm.to}</p><p><b>Fecha de emisión:</b> {todayIso()}</p><p><b>Trabajador:</b> {selectedPayslip.name}</p><p><b>Cargo:</b> {selectedPayslip.cargo}</p><p><b>Vínculo:</b> {selectedPayslip.link}</p><p><b>Régimen:</b> {selectedPayslip.regime}</p><p><b>Días considerados:</b> {selectedPayslip.days}</p></div>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <div><h3 className="font-black">Ingresos</h3>{selectedPayslip.details.income.map((item) => <div key={item.label} className="flex justify-between border-b border-slate-100 py-2"><span>{item.label}</span><b>{money(item.amount)}</b></div>)}<div className="flex justify-between py-2 text-base"><b>Total ingresos</b><b>{money(selectedPayslip.totalIncome)}</b></div></div>
+                  <div><h3 className="font-black">Descuentos</h3>{selectedPayslip.details.discounts.length ? selectedPayslip.details.discounts.map((item) => <div key={item.label} className="flex justify-between border-b border-slate-100 py-2"><span>{item.label}</span><b>{money(item.amount)}</b></div>) : <p className="py-2 text-slate-500">No aplica.</p>}<div className="flex justify-between py-2 text-base"><b>Total descuentos</b><b>{money(selectedPayslip.totalDiscounts)}</b></div></div>
+                  <div><h3 className="font-black">Aportes / costos empresa</h3>{selectedPayslip.details.employer.length ? selectedPayslip.details.employer.map((item) => <div key={item.label} className="flex justify-between border-b border-slate-100 py-2"><span>{item.label}</span><b>{money(item.amount)}</b></div>) : <p className="py-2 text-slate-500">No aplica.</p>}<div className="flex justify-between py-2 text-base"><b>Costo empresa estimado</b><b>{money(selectedPayslip.companyCost)}</b></div></div>
+                </div>
+                <div className="mt-5 grid gap-3 rounded-2xl bg-slate-50 p-4 sm:grid-cols-2"><div><p className="text-xs uppercase text-slate-500">Neto a pagar</p><p className="text-2xl font-black">{money(selectedPayslip.netPay)}</p></div><div><p className="text-xs uppercase text-slate-500">Observación</p><p>{selectedPayslip.details.observation}</p></div></div>
+                <div className="mt-12 grid grid-cols-2 gap-10 text-center"><div className="border-t border-slate-500 pt-2">Firma empresa</div><div className="border-t border-slate-500 pt-2">Firma trabajador</div></div>
+              </div>
+            ) : <p className="mt-4 text-sm text-slate-500">No hay trabajadores activos para generar boleta.</p>}
+          </CollapsibleSection>
+        ) : null}
+      </main>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root") as HTMLElement).render(<App />);
