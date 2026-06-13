@@ -29,7 +29,10 @@ jobs:
           node-version: 20
 
       - name: Instalar dependencias
-        run: npm install
+        run: npm install --include=dev
+
+      - name: Instalar Vite explícitamente
+        run: npm install vite @vitejs/plugin-react typescript --save-dev
 
       - name: Compilar aplicativo
         run: npm run build
